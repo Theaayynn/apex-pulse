@@ -1,0 +1,420 @@
+// ============================================================================
+// Apex Pulse — Prisma Schema
+// Phase 1 tables are fully wired to the app (User, Session, AuditLog, Token).
+// Remaining tables are defined now so later phases never need a breaking
+// migration — they are additive only.
+// ============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// ENUMS
+// ---------------------------------------------------------------------------
+
+enum Role {
+  SUPER_ADMIN
+  ADMIN
+  EMPLOYEE
+  CUSTOMER
+}
+
+enum TokenType {
+  EMAIL_VERIFICATION
+  PASSWORD_RESET
+}
+
+enum OrderStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+  CANCELLED
+}
+
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  PAID
+  OVERDUE
+  VOID
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum TicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  QUALIFIED
+  LOST
+  CONVERTED
+}
+
+enum PaymentGateway {
+  STRIPE
+  RAZORPAY
+}
+
+// ---------------------------------------------------------------------------
+// PHASE 1 — AUTH / USERS / RBAC / AUDIT
+// ---------------------------------------------------------------------------
+
+model User {
+  id                String    @id @default(cuid())
+  name              String
+  email             String    @unique
+  passwordHash      String
+  role              Role      @default(CUSTOMER)
+  avatarUrl         String?
+  phone             String?
+  isEmailVerified   Boolean   @default(false)
+  isActive          Boolean   @default(true)
+  lastLoginAt       DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  sessions          Session[]
+  tokens            Token[]
+  auditLogs         AuditLog[]
+  orders            Order[]
+  invoices          Invoice[]
+  supportTickets    SupportTicket[]  @relation("TicketOwner")
+  assignedTickets   SupportTicket[]  @relation("TicketAssignee")
+  notifications     Notification[]
+  reviews           Review[]
+
+  @@index([email])
+  @@index([role])
+}
+
+model Session {
+  id            String   @id @default(cuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  refreshToken  String   @unique
+  userAgent     String?
+  ipAddress     String?
+  expiresAt     DateTime
+  createdAt     DateTime @default(now())
+  revokedAt     DateTime?
+
+  @@index([userId])
+}
+
+model Token {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      TokenType
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, type])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action     String
+  entityType String?
+  entityId   String?
+  metadata   Json?
+  ipAddress  String?
+  createdAt  DateTime @default(now())
+
+  @@index([userId])
+  @@index([action])
+}
+
+// ---------------------------------------------------------------------------
+// PHASE 4 — CMS (site content editable without code)
+// ---------------------------------------------------------------------------
+
+model SiteSetting {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     Json
+  updatedAt DateTime @updatedAt
+}
+
+model PageContent {
+  id        String   @id @default(cuid())
+  slug      String   @unique
+  title     String
+  sections  Json
+  seoTitle       String?
+  seoDescription String?
+  ogImage        String?
+  isPublished    Boolean @default(true)
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+}
+
+model BlogPost {
+  id          String   @id @default(cuid())
+  title       String
+  slug        String   @unique
+  excerpt     String
+  content     String
+  coverImage  String?
+  authorName  String
+  tags        String[]
+  isPublished Boolean  @default(false)
+  publishedAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([slug])
+}
+
+model Testimonial {
+  id         String   @id @default(cuid())
+  authorName String
+  authorRole String?
+  avatarUrl  String?
+  content    String
+  rating     Int      @default(5)
+  isFeatured Boolean  @default(false)
+  createdAt  DateTime @default(now())
+}
+
+model GalleryItem {
+  id        String   @id @default(cuid())
+  title     String
+  imageUrl  String
+  category  String?
+  createdAt DateTime @default(now())
+}
+
+model CaseStudy {
+  id          String   @id @default(cuid())
+  title       String
+  slug        String   @unique
+  client      String
+  summary     String
+  content     String
+  coverImage  String?
+  metrics     Json?
+  isPublished Boolean  @default(false)
+  createdAt   DateTime @default(now())
+}
+
+model FAQ {
+  id        String   @id @default(cuid())
+  question  String
+  answer    String
+  category  String?
+  order     Int      @default(0)
+}
+
+model Review {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  authorName String
+  rating    Int
+  comment   String
+  isApproved Boolean @default(false)
+  createdAt DateTime @default(now())
+}
+
+// ---------------------------------------------------------------------------
+// PHASE 4 — FORMS / LEADS
+// ---------------------------------------------------------------------------
+
+model Lead {
+  id        String     @id @default(cuid())
+  formType  String     // contact | callback | feedback | complaint | lead
+  name      String
+  email     String
+  phone     String?
+  message   String
+  status    LeadStatus @default(NEW)
+  metadata  Json?
+  createdAt DateTime   @default(now())
+
+  @@index([formType])
+  @@index([status])
+}
+
+model NewsletterSubscriber {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  isSubscribed Boolean  @default(true)
+  createdAt    DateTime @default(now())
+}
+
+model CareerApplication {
+  id          String   @id @default(cuid())
+  fullName    String
+  email       String
+  phone       String?
+  position    String
+  resumeUrl   String
+  coverLetter String?
+  createdAt   DateTime @default(now())
+}
+
+// ---------------------------------------------------------------------------
+// PHASE 3/4 — BILLING (Plans, Orders, Invoices, Payments, Coupons)
+// ---------------------------------------------------------------------------
+
+model Plan {
+  id            String   @id @default(cuid())
+  name          String
+  slug          String   @unique
+  description   String?
+  priceMonthly  Int      // in smallest currency unit (paise/cents)
+  priceYearly   Int
+  currency      String   @default("INR")
+  features      String[]
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+
+  orders Order[]
+}
+
+model Coupon {
+  id             String   @id @default(cuid())
+  code           String   @unique
+  discountType   String   // PERCENT | FLAT
+  discountValue  Int
+  maxRedemptions Int?
+  redeemedCount  Int      @default(0)
+  expiresAt      DateTime?
+  isActive       Boolean  @default(true)
+
+  orders Order[]
+}
+
+model Order {
+  id            String        @id @default(cuid())
+  userId        String
+  user          User          @relation(fields: [userId], references: [id])
+  planId        String?
+  plan          Plan?         @relation(fields: [planId], references: [id])
+  couponId      String?
+  coupon        Coupon?       @relation(fields: [couponId], references: [id])
+  amount        Int
+  currency      String        @default("INR")
+  status        OrderStatus   @default(PENDING)
+  gateway       PaymentGateway?
+  gatewayOrderId String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  payments Payment[]
+  invoice  Invoice?
+
+  @@index([userId])
+  @@index([status])
+}
+
+model Payment {
+  id                String         @id @default(cuid())
+  orderId           String
+  order             Order          @relation(fields: [orderId], references: [id])
+  gateway           PaymentGateway
+  gatewayPaymentId  String
+  amount            Int
+  currency          String
+  status            String
+  rawPayload         Json?
+  createdAt         DateTime       @default(now())
+
+  @@index([orderId])
+}
+
+model Invoice {
+  id            String        @id @default(cuid())
+  orderId       String        @unique
+  order         Order         @relation(fields: [orderId], references: [id])
+  userId        String
+  user          User          @relation(fields: [userId], references: [id])
+  invoiceNumber String        @unique
+  status        InvoiceStatus @default(SENT)
+  amount        Int
+  currency      String
+  pdfUrl        String?
+  issuedAt      DateTime      @default(now())
+  dueAt         DateTime?
+
+  @@index([userId])
+}
+
+// ---------------------------------------------------------------------------
+// PHASE 3/4 — SUPPORT / NOTIFICATIONS
+// ---------------------------------------------------------------------------
+
+model SupportTicket {
+  id          String         @id @default(cuid())
+  userId      String
+  user        User           @relation("TicketOwner", fields: [userId], references: [id])
+  assigneeId  String?
+  assignee    User?          @relation("TicketAssignee", fields: [assigneeId], references: [id])
+  subject     String
+  description String
+  status      TicketStatus   @default(OPEN)
+  priority    TicketPriority @default(MEDIUM)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  messages TicketMessage[]
+
+  @@index([userId])
+  @@index([status])
+}
+
+model TicketMessage {
+  id        String        @id @default(cuid())
+  ticketId  String
+  ticket    SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  senderId  String
+  message   String
+  createdAt DateTime      @default(now())
+
+  @@index([ticketId])
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  body      String
+  channel   String   @default("EMAIL") // EMAIL | SMS | WHATSAPP | IN_APP
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+model MediaAsset {
+  id         String   @id @default(cuid())
+  url        String
+  publicId   String
+  type       String   // image | video | document
+  uploadedBy String?
+  createdAt  DateTime @default(now())
+}
